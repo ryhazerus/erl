@@ -122,6 +122,62 @@ limiter := erl.New(erl.WithStore(s))
 
 Persists across restarts. Uses [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure Go, no CGo).
 
+### Redis
+
+Distributed rate limiting across multiple instances. Available as a separate submodule to keep the core dependency-free.
+
+```bash
+go get github.com/ryhazerus/erl/store/redis
+```
+
+```go
+import (
+	"github.com/redis/go-redis/v9"
+	erlredis "github.com/ryhazerus/erl/store/redis"
+)
+
+client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+rs := erlredis.NewRedisStore(client)
+limiter := erl.New(erl.WithStore(rs))
+```
+
+Counters are stored as Redis hashes (`erl:<key>`) with automatic TTL expiry matching the window duration. Uses Lua scripts for atomic increment + bucket rollover.
+
+### Tiered (memory + persistent)
+
+Combines an in-memory cache with any persistent backend for fast reads with durability.
+
+```go
+sqliteStore, _ := store.NewSQLiteStore("erl.db")
+ts := store.NewTieredStore(sqliteStore)
+limiter := erl.New(erl.WithStore(ts))
+```
+
+Write-through: increments go to both stores. Reads hit memory first and fall back to the persistent backend on a miss.
+
+## Observability
+
+### Snapshot
+
+Get a point-in-time view of all registered resource counters:
+
+```go
+statuses, err := limiter.Snapshot(ctx)
+for _, s := range statuses {
+	fmt.Printf("%s: %d/%d\n", s.Resource.Name, s.Current, s.Resource.Limit)
+}
+```
+
+### Resources
+
+List all registered resources:
+
+```go
+for _, r := range limiter.Resources() {
+	fmt.Printf("%s (%s, %s)\n", r.Name, r.Window, r.Strategy)
+}
+```
+
 ## Check Usage
 
 ```go

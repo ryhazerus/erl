@@ -166,6 +166,49 @@ func (l *Limiter) Transport(base http.RoundTripper) http.RoundTripper {
 	return &transport{limiter: l, base: base}
 }
 
+// Resources returns a copy of all registered resources.
+func (l *Limiter) Resources() []Resource {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	out := make([]Resource, len(l.resources))
+	copy(out, l.resources)
+	return out
+}
+
+// ResourceStatus holds a point-in-time counter for a single resource.
+type ResourceStatus struct {
+	Resource Resource
+	Current  int64
+}
+
+// Snapshot returns the current counter for every registered resource
+// in its active window bucket.
+func (l *Limiter) Snapshot(ctx context.Context) ([]ResourceStatus, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	out := make([]ResourceStatus, 0, len(l.resources))
+	now := time.Now()
+
+	for _, r := range l.resources {
+		w := store.Window{
+			Duration:    r.Window.Duration(),
+			BucketKey:   r.Window.BucketKey(now),
+			BucketStart: r.Window.BucketStart(now),
+		}
+
+		current, err := l.store.Get(ctx, r.Name, w)
+		if err != nil {
+			return nil, fmt.Errorf("erl: snapshot %s: %w", r.Name, err)
+		}
+
+		out = append(out, ResourceStatus{Resource: r, Current: current})
+	}
+
+	return out, nil
+}
+
 // Close releases resources held by the limiter's store.
 func (l *Limiter) Close() error {
 	return l.store.Close()
